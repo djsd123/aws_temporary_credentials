@@ -1,49 +1,57 @@
 package main
 
 import (
-	"github.com/aws/aws-sdk-go/service/sts"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
 	"fmt"
-	"bufio"
+	"github.com/djsd123/aws_temporary_credentials/get_session_token"
 	"os"
+	"log"
+	"html/template"
+	"path/filepath"
 )
+
 
 func main() {
 
-	var (
-		serialNumber = "Device-ARN"
-	)
+	creds := get_session_token.GetSessionToken()
+	home := os.Getenv("HOME")
+	awsDirectory := ".aws"
+	path := fmt.Sprintf("%v" + string(filepath.Separator) + "%v", home, awsDirectory)
 
-
-	mfa_code := bufio.NewScanner(os.Stdin)
-	fmt.Println("Enter MFA Code: ")
-	mfa_code.Scan()
-
-	svc := sts.New(session.New())
-
-	input := &sts.GetSessionTokenInput {
-		DurationSeconds: aws.Int64(900),
-		SerialNumber:    aws.String(serialNumber),
-		TokenCode:       aws.String(mfa_code.Text()),
-	}
-
-	result, err := svc.GetSessionToken(input)
-	if err != nil {
-		if aerr, ok := err.(awserr.Error); ok {
-			switch aerr.Code() {
-			case sts.ErrCodeRegionDisabledException:
-				fmt.Println(sts.ErrCodeRegionDisabledException, aerr.Error())
-			default:
-				fmt.Println(aerr.Error())
-			}
-		} else {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		err := os.Mkdir(path, 0755)
+		if err != nil {
 			fmt.Println(err.Error())
 		}
-		return
 	}
 
-	fmt.Println(result)
+	filePath := path + "/config"
+
+	const awsConfig = `
+[default]
+region=eu-west-1
+aws_access_key_id={{ .AccessKeyID }}
+aws_secret_access_key={{ .SecretAccessKey }}
+aws_session_token={{ .SessionToken }}
+`
+
+	templ, err := template.New("config").Parse(awsConfig)
+	if err != nil {
+		log.Fatal(err)
+		panic(err)
+	}
+
+	profile, err := os.OpenFile(filePath, os.O_CREATE | os.O_WRONLY | os.O_TRUNC, 0644)
+	if err != nil{
+		log.Fatalf("Failed to open file: %s", err)
+		panic(err)
+	}
+
+
+	err = templ.Execute(profile, creds)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer profile.Close()
 
 }
